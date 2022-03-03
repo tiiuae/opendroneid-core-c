@@ -27,7 +27,9 @@ sw@simonwunderlich.de
 #include <linux/nl80211.h>
 
 #include <gps.h>
-
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <opendroneid.h>
 
 /* convert a timespec to a double.
@@ -43,6 +45,9 @@ sw@simonwunderlich.de
 struct global {
     char server[1024];
     char port[16];
+    struct sockaddr_in serv_addr;
+    int sockfd;
+    char buffer[1024];
     char wlan_iface[16];
     char mac[6];
     uint8_t send_counter;
@@ -181,6 +186,12 @@ int read_arguments(int argc, char *argv[], ODID_UAS_Data *drone, struct global *
     return 0;
 }
 
+static void drone_adopt_px4_gps_data(ODID_UAS_Data *drone,
+                                 char *buffer)
+{
+}
+
+#ifdef IS_GPSD_AVAILABLE
 /**
  * drone_adopt_gps_data - adopt GPS data into the drone status info
  * @gpsdata: gps data from gpsd
@@ -243,6 +254,7 @@ static void drone_adopt_gps_data(ODID_UAS_Data *drone,
            drone->Location.Latitude, drone->Location.Longitude
     );
 }
+#endif
 
 /**
  * drone_set_mock_data - populate the drone with some mock information as placeholder
@@ -432,14 +444,46 @@ static int get_device_mac(const char *iface, char *mac, int *if_index)
     return 0;
 }
 
+int sock_connect(struct global *global)
+{
+    memset(global->buffer, '0',sizeof(global->buffer));
+    if((global->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Error : Could not create socket \n");
+        return 1;
+    }
+
+    memset(&global->serv_addr, '0', sizeof(global->serv_addr));
+
+    global->serv_addr.sin_family = AF_INET;
+    global->serv_addr.sin_port = htons(33222);
+
+    if(inet_pton(AF_INET, "127.0.0.1", &global->serv_addr.sin_addr)<=0)
+    {
+        printf("\n inet_pton error occured\n");
+        return -1;
+    }
+
+    if( connect(global->sockfd, (struct sockaddr *)&global->serv_addr, sizeof(global->serv_addr)) < 0)
+    {
+       printf("\n Error : Connect Failed \n");
+       return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     ODID_UAS_Data drone;
     struct global global;
+#ifdef IS_GPSD_AVAILABLE
     struct gps_data_t gpsdata;
+    int ret;
+#endif
     struct nl_sock *nl_sock = NULL;
     int if_index;
-    int ret, errno;
+    int errno, n = 0;
 
     memset(&drone, 0, sizeof(drone));
     memset(&global, 0, sizeof(global));
@@ -465,6 +509,7 @@ int main(int argc, char *argv[])
         goto out;
     }
 
+#ifdef IS_GPSD_AVAILABLE
     if (gps_open(global.server, global.port, &gpsdata) != 0) {
         fprintf(stderr, "%s: gpsd error: %d, %s\n", argv[0],
                 errno, gps_errstr(errno));
@@ -472,10 +517,17 @@ int main(int argc, char *argv[])
     }
 
     gps_stream(&gpsdata, WATCH_ENABLE | WATCH_JSON, NULL);
-
+#else
+    /* Connect to GPS server */
+    if (sock_connect(&global)) {
+        fprintf(stderr, "gps server connection failed: %d, %s\n",
+                errno, gps_errstr(errno));
+        goto out;
+    }
+#endif
     while (1) {
         sleep((unsigned int) global.refresh_rate);
-
+#ifdef IS_GPSD_AVAILABLE
         /* read as much as we can using gps_read() */
 #if GPSD_API_MAJOR_VERSION >= 7
         while ((ret = gps_read(&gpsdata, NULL, 0)) > 0);
@@ -490,10 +542,29 @@ int main(int argc, char *argv[])
         drone_adopt_gps_data(&drone, &gpsdata);
         drone_set_mock_data(&drone);
         drone_send_data(&drone, &global, nl_sock, if_index);
-    }
 
     gps_stream(&gpsdata, WATCH_DISABLE, NULL);
     gps_close(&gpsdata);
+#else
+        while ( (n = read(global.sockfd, global.buffer, sizeof(global.buffer)-1)) > 0)
+        {
+            global.buffer[n] = 0;
+            if(fputs(global.buffer, stdout) == EOF)
+            {
+                printf("\n Error : Fputs error\n");
+            }
+        }
+        drone_adopt_px4_gps_data(&drone, global.buffer);
+        drone_set_mock_data(&drone);
+        drone_send_data(&drone, &global, nl_sock, if_index);
+#endif
+    }
+#ifdef IS_GPSD_AVAILABLE
+    gps_stream(&gpsdata, WATCH_DISABLE, NULL);
+    gps_close(&gpsdata);
+#else
+    close(global.sockfd);
+#endif
 out:
     nl_socket_free(nl_sock);
 
