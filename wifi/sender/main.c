@@ -45,9 +45,12 @@ sw@simonwunderlich.de
 struct global {
     char server[1024];
     char port[16];
+#ifndef IS_GPSD_AVAILABLE
     struct sockaddr_in serv_addr;
     int sockfd;
+    int newsockfd;
     char buffer[1024];
+#endif
     char wlan_iface[16];
     char mac[6];
     uint8_t send_counter;
@@ -446,6 +449,7 @@ static int get_device_mac(const char *iface, char *mac, int *if_index)
 
 int sock_connect(struct global *global)
 {
+    int addrlen = sizeof(global->serv_addr);
     memset(global->buffer, '0',sizeof(global->buffer));
     if((global->sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
@@ -453,6 +457,7 @@ int sock_connect(struct global *global)
         return 1;
     }
 
+    printf("socket created successfully \n");
     memset(&global->serv_addr, '0', sizeof(global->serv_addr));
 
     global->serv_addr.sin_family = AF_INET;
@@ -463,12 +468,22 @@ int sock_connect(struct global *global)
         printf("\n inet_pton error occured\n");
         return -1;
     }
-
-    if( connect(global->sockfd, (struct sockaddr *)&global->serv_addr, sizeof(global->serv_addr)) < 0)
+    if (bind(global->sockfd, (struct sockaddr *)&global->serv_addr, sizeof(global->serv_addr)) < 0)
     {
-       printf("\n Error : Connect Failed \n");
-       return -1;
+        printf("socket bind failed\n");
+        return -1;
     }
+    if (listen(global->sockfd, 3) < 0)
+    {
+        printf("socket listen failed\n");
+        return -1;
+    }
+    if ((global->newsockfd = accept(global->sockfd, (struct sockaddr *)&global->serv_addr, (socklen_t*)&addrlen)) < 0)
+    {
+        printf("socket accept failed\n");
+        return -1;
+    }
+    printf("DRI socket connected successfully \n");
 
     return 0;
 }
@@ -525,9 +540,9 @@ int main(int argc, char *argv[])
         goto out;
     }
 #endif
+#ifdef IS_GPSD_AVAILABLE
     while (1) {
         sleep((unsigned int) global.refresh_rate);
-#ifdef IS_GPSD_AVAILABLE
         /* read as much as we can using gps_read() */
 #if GPSD_API_MAJOR_VERSION >= 7
         while ((ret = gps_read(&gpsdata, NULL, 0)) > 0);
@@ -545,26 +560,22 @@ int main(int argc, char *argv[])
 
     gps_stream(&gpsdata, WATCH_DISABLE, NULL);
     gps_close(&gpsdata);
-#else
-        while ( (n = read(global.sockfd, global.buffer, sizeof(global.buffer)-1)) > 0)
-        {
-            global.buffer[n] = 0;
-            if(fputs(global.buffer, stdout) == EOF)
-            {
-                printf("\n Error : Fputs error\n");
-            }
-        }
-        drone_adopt_px4_gps_data(&drone, global.buffer);
-        drone_set_mock_data(&drone);
-        drone_send_data(&drone, &global, nl_sock, if_index);
-#endif
     }
-#ifdef IS_GPSD_AVAILABLE
     gps_stream(&gpsdata, WATCH_DISABLE, NULL);
     gps_close(&gpsdata);
 #else
+    while ( (n = recv(global.newsockfd, global.buffer, sizeof(global.buffer)-1, 0)) > 0)
+    {
+        global.buffer[n] = '\0';
+        drone_adopt_px4_gps_data(&drone, global.buffer);
+        drone_set_mock_data(&drone);
+        drone_send_data(&drone, &global, nl_sock, if_index);
+        printf("rx DATA: %d: %s\n", n, global.buffer);
+        memset(global.buffer, '0',sizeof(global.buffer));
+    }
     close(global.sockfd);
 #endif
+
 out:
     nl_socket_free(nl_sock);
 
