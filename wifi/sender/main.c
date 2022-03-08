@@ -16,6 +16,7 @@ sw@simonwunderlich.de
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <errno.h>
 
 #include <net/if.h>
@@ -57,6 +58,36 @@ struct global {
     int refresh_rate;
     int test_json;
     int set_ssid_string;
+};
+
+struct gps_pos {
+    uint64_t timestamp;
+    int32_t lat;
+    int32_t lon;
+    int32_t alt;
+    int32_t alt_ellipsoid;
+    float s_variance_m_s;
+    float c_variance_rad;
+    uint8_t fix_type;
+    float eph;
+    float epv;
+    float hdop;
+    float vdop;
+    int32_t noise_per_ms;
+    int32_t jamming_indicator;
+    uint8_t jamming_state;
+    float vel_m_s;
+    float vel_n_m_s;
+    float vel_e_m_s;
+    float vel_d_m_s;
+    float cog_rad;
+    bool vel_ned_valid;
+    int32_t timestamp_time_relative;
+    uint64_t time_utc_usec;
+    uint8_t satellites_used;
+    float heading;
+    float heading_offset;
+    uint8_t selected;
 };
 
 void usage(char *name)
