@@ -223,6 +223,47 @@ int read_arguments(int argc, char *argv[], ODID_UAS_Data *drone, struct global *
 static void drone_adopt_px4_gps_data(ODID_UAS_Data *drone,
                                  char *buffer)
 {
+    struct gps_pos *msg = (struct gps_pos *)buffer;
+
+    drone->LocationValid = 1;
+    drone->Location.Status = ODID_STATUS_AIRBORNE;
+
+    /* Latitude/Longitude */
+    drone->Location.Latitude = msg->lat;
+    drone->Location.Longitude = msg->lon;
+    drone->Location.HorizAccuracy = msg->epv > msg->eph ?
+            createEnumHorizontalAccuracy((float) msg->epv) : createEnumHorizontalAccuracy((float) msg->eph);
+
+    /* Altitude */
+    drone->Location.AltitudeBaro = -1000; /* unknown */
+    drone->Location.AltitudeGeo = (float) msg->alt;
+    drone->Location.BaroAccuracy = ODID_VER_ACC_UNKNOWN; /* unknown */
+    drone->Location.VertAccuracy = createEnumVerticalAccuracy((float) msg->epv);
+    drone->Location.HeightType = ODID_HEIGHT_REF_OVER_GROUND;
+    drone->Location.Height = -1000; /* unknown */
+
+    /* Horizontal movement:TBD */
+    drone->Location.Direction = -1000; /* unknown */
+    drone->Location.SpeedHorizontal = -1000; /* unknown */
+
+    /* Vertical movement:TBD */
+    drone->Location.SpeedVertical = -1000; /* unknown */
+    drone->Location.SpeedAccuracy = -1000; /* unknown */
+
+    /* Time: conversion?: TBD */
+    drone->Location.TimeStamp = msg->timestamp;
+    drone->Location.TSAccuracy = -1000; /* unknown */
+
+    printf("drone:\n\t"
+           "TimeStamp: %f, time since last hour (100ms): %zu, TSAccuracy: %d\n\t"
+           "Direction: %f, SpeedHorizontal: %f, SpeedVertical: %f\n\t"
+           "Latitude: %f, Longitude: %f\n",
+           (double) drone->Location.TimeStamp,
+           (size_t) ((uint64_t) (drone->Location.TimeStamp*10)%36000), drone->Location.TSAccuracy,
+           (double) drone->Location.Direction, (double) drone->Location.SpeedHorizontal,
+           (double) drone->Location.SpeedVertical,
+           drone->Location.Latitude, drone->Location.Longitude
+    );
 }
 
 #ifdef IS_GPSD_AVAILABLE
